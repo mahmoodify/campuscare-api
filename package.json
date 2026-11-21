@@ -1,0 +1,17 @@
+{
+  "name": "campuscare-api",
+  "version": "1.0.0",
+  "description": "CampusCare API prototype (mocked in-memory data, token auth, role-based authorization)",
+  "main": "src/server.js",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test",
+    "postman": "node scripts/generate-postman.js"
+  }
+}
