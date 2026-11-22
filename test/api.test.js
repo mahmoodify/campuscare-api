@@ -462,6 +462,46 @@ describe('status workflow (PUT /reports/{id}/status)', () => {
   });
 });
 
+describe('inventory items, metrics and health', () => {
+  it('lists inventory items for any signed-in user', async () => {
+    const res = await ctx.call('GET', api('/inventory-items'), { token: A });
+    assert.equal(res.status, 200);
+    assert.equal(res.json.meta.total, 9);
+    const b = await ctx.call('GET', api('/inventory-items?building=building%20b'), { token: A });
+    assert.equal(b.json.meta.total, 3);
+  });
+
+  it('requires a token for inventory items', async () => {
+    assertErrorEnvelope(await ctx.call('GET', api('/inventory-items')), 401, 'UNAUTHORIZED');
+  });
+
+  it('metrics are admin-only', async () => {
+    assertErrorEnvelope(await ctx.call('GET', api('/metrics/maintenance'), { token: A }), 403, 'FORBIDDEN');
+    assertErrorEnvelope(await ctx.call('GET', api('/metrics/maintenance'), { token: STAFF }), 403, 'FORBIDDEN');
+    assertErrorEnvelope(await ctx.call('GET', api('/metrics/maintenance')), 401, 'UNAUTHORIZED');
+  });
+
+  it('metrics report average inspection and resolution times', async () => {
+    const res = await ctx.call('GET', api('/metrics/maintenance'), { token: ADMIN });
+    assert.equal(res.status, 200);
+    const d = res.json.data;
+    assert.equal(d.totalReports, 5);
+    assert.deepEqual(d.byStatus, { PENDING: 3, IN_PROGRESS: 1, RESOLVED: 1 });
+    assert.equal(d.averageMinutesToInspect, 37.5); // (30 + 45) / 2
+    assert.equal(d.averageMinutesToResolve, 210);
+    assert.deepEqual(d.openReportsByBuilding, [
+      { building: 'Building A', open: 2 },
+      { building: 'Building B', open: 2 },
+    ]);
+  });
+
+  it('health check is public', async () => {
+    const res = await ctx.call('GET', api('/health'));
+    assert.equal(res.status, 200);
+    assert.equal(res.json.data.status, 'UP');
+  });
+});
+
 describe('routing errors and safety', () => {
   it('returns 405 with an Allow header for an unsupported method', async () => {
     const res = await ctx.call('DELETE', api('/reports'), { token: ADMIN });
