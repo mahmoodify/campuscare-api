@@ -1,0 +1,225 @@
+### CampusCare API example requests
+### Works with the VS Code "REST Client" extension and JetBrains HTTP Client.
+### Start the server first:  npm start
+
+@baseUrl = http://localhost:3000/api/v1
+@userA = user-a-token
+@userB = user-b-token
+@staff = staff-token
+@admin = admin-token
+
+###############################################################
+# HTML greeting page and health
+###############################################################
+
+### Greeting page (HTML, no token)
+GET {{baseUrl}}/greeting
+
+### Health check (public)
+GET {{baseUrl}}/health
+
+### Who am I?
+GET {{baseUrl}}/me
+Authorization: Bearer {{userA}}
+
+###############################################################
+# Authentication failures (401)
+###############################################################
+
+### No token -> 401
+GET {{baseUrl}}/reports
+
+### Invalid token -> 401
+GET {{baseUrl}}/reports
+Authorization: Bearer wrong-token
+
+###############################################################
+# Read (GET)
+###############################################################
+
+### User A lists their own reports
+GET {{baseUrl}}/reports
+Authorization: Bearer {{userA}}
+
+### Filter, sort and paginate
+GET {{baseUrl}}/reports?status=PENDING&sort=-priority&page=1&perPage=5
+Authorization: Bearer {{admin}}
+
+### User A reads their own report -> 200
+GET {{baseUrl}}/reports/rep_101
+Authorization: Bearer {{userA}}
+
+### User A reads User B's report -> 404 (ownership)
+GET {{baseUrl}}/reports/rep_103
+Authorization: Bearer {{userA}}
+
+### User B reads User A's report -> 404 (ownership)
+GET {{baseUrl}}/reports/rep_101
+Authorization: Bearer {{userB}}
+
+### Admin reads any report -> 200
+GET {{baseUrl}}/reports/rep_103
+Authorization: Bearer {{admin}}
+
+### Non-existent ID -> 404
+GET {{baseUrl}}/reports/rep_999
+Authorization: Bearer {{admin}}
+
+### Inventory items students can pick from
+GET {{baseUrl}}/inventory-items?building=Building%20A
+Authorization: Bearer {{userA}}
+
+###############################################################
+# Create (POST)
+###############################################################
+
+### Create a report -> 201 + Location header
+POST {{baseUrl}}/reports
+Authorization: Bearer {{userA}}
+Content-Type: application/json
+
+{
+  "inventoryItemId": "inv_002",
+  "issueType": "BROKEN",
+  "comment": "Exit sign is dark"
+}
+
+### Same request again -> 409 (duplicate open report)
+POST {{baseUrl}}/reports
+Authorization: Bearer {{userA}}
+Content-Type: application/json
+
+{
+  "inventoryItemId": "inv_002",
+  "issueType": "BROKEN",
+  "comment": "Exit sign is dark"
+}
+
+### Validation errors -> 400 with details
+POST {{baseUrl}}/reports
+Authorization: Bearer {{userA}}
+Content-Type: application/json
+
+{
+  "issueType": "EXPLODED",
+  "comment": "x",
+  "ownerId": "user-b"
+}
+
+### Malformed JSON -> 400 INVALID_JSON
+POST {{baseUrl}}/reports
+Authorization: Bearer {{userA}}
+Content-Type: application/json
+
+{ "inventoryItemId":
+
+### Staff cannot create reports -> 403
+POST {{baseUrl}}/reports
+Authorization: Bearer {{staff}}
+Content-Type: application/json
+
+{ "inventoryItemId": "inv_001", "issueType": "BROKEN" }
+
+###############################################################
+# Update (PUT)
+###############################################################
+
+### User A updates their pending report -> 200
+PUT {{baseUrl}}/reports/rep_101
+Authorization: Bearer {{userA}}
+Content-Type: application/json
+
+{
+  "inventoryItemId": "inv_001",
+  "issueType": "MISSING",
+  "comment": "The bulb was removed"
+}
+
+### User A updates User B's report -> 404
+PUT {{baseUrl}}/reports/rep_103
+Authorization: Bearer {{userA}}
+Content-Type: application/json
+
+{ "inventoryItemId": "inv_003", "issueType": "BROKEN" }
+
+### User A edits a report that is already in progress -> 409
+PUT {{baseUrl}}/reports/rep_102
+Authorization: Bearer {{userA}}
+Content-Type: application/json
+
+{ "inventoryItemId": "inv_004", "issueType": "BROKEN" }
+
+### Admin can edit any report -> 200
+PUT {{baseUrl}}/reports/rep_102
+Authorization: Bearer {{admin}}
+Content-Type: application/json
+
+{ "inventoryItemId": "inv_004", "issueType": "BROKEN" }
+
+###############################################################
+# Status workflow (staff)
+###############################################################
+
+### Staff start inspection -> 200 (records inspectedAt)
+PUT {{baseUrl}}/reports/rep_101/status
+Authorization: Bearer {{staff}}
+Content-Type: application/json
+
+{ "status": "IN_PROGRESS" }
+
+### Staff resolve -> 200 (records resolvedAt)
+PUT {{baseUrl}}/reports/rep_101/status
+Authorization: Bearer {{staff}}
+Content-Type: application/json
+
+{ "status": "RESOLVED" }
+
+### Reopening a resolved report -> 409
+PUT {{baseUrl}}/reports/rep_101/status
+Authorization: Bearer {{staff}}
+Content-Type: application/json
+
+{ "status": "PENDING" }
+
+### A student tries to change status -> 403
+PUT {{baseUrl}}/reports/rep_105/status
+Authorization: Bearer {{userB}}
+Content-Type: application/json
+
+{ "status": "IN_PROGRESS" }
+
+###############################################################
+# Delete (DELETE)
+###############################################################
+
+### User B deletes User A's report -> 404
+DELETE {{baseUrl}}/reports/rep_102
+Authorization: Bearer {{userB}}
+
+### User B withdraws their own pending report -> 200
+DELETE {{baseUrl}}/reports/rep_105
+Authorization: Bearer {{userB}}
+
+### Admin deletes any report -> 200
+DELETE {{baseUrl}}/reports/rep_103
+Authorization: Bearer {{admin}}
+
+###############################################################
+# Admin metrics and routing errors
+###############################################################
+
+### Metrics (admin only)
+GET {{baseUrl}}/metrics/maintenance
+Authorization: Bearer {{admin}}
+
+### Metrics as a student -> 403
+GET {{baseUrl}}/metrics/maintenance
+Authorization: Bearer {{userA}}
+
+### Unsupported method -> 405
+DELETE {{baseUrl}}/reports
+Authorization: Bearer {{admin}}
+
+### Unknown route -> 404
+GET {{baseUrl}}/unicorns
+Authorization: Bearer {{admin}}
