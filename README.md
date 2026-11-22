@@ -126,6 +126,14 @@ scripts/               Postman collection generator
 
 See [CONTRIBUTORS.md](CONTRIBUTORS.md) for members, student IDs and responsibilities.
 
+### `git shortlog -sn --all`
+
+```text
+    20  mahmoodify
+    18  Kamal-Mustafayev
+     5  Mahmud Aliyev
+     4  Kamal Mustafayev
+```
 
 ### Who worked on which part
 
