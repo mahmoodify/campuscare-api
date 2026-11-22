@@ -531,3 +531,116 @@ Content-Type: application/json
 ```
 
 ---
+
+### 2.7 `GET /api/v1/inventory-items`: list reportable items
+
+The preset list students pick from (no typing needed).
+
+- **Access:** any signed-in user
+- **Headers:** `Authorization: Bearer <token>`
+- **Query parameters:** `building` (string, case-insensitive exact match, 1–50 characters), `page` (default 1), `perPage` (default 10, max 100)
+- **Success:** `200 OK`, `data` is an array of items, plus `meta`.
+- **Errors:** `400 VALIDATION_ERROR` (bad or unknown query parameter), `401 UNAUTHORIZED`.
+
+**Example**
+
+```http
+GET /api/v1/inventory-items?building=Building%20C&perPage=2 HTTP/1.1
+Authorization: Bearer user-b-token
+```
+
+```json
+{
+  "success": true,
+  "message": "Inventory items retrieved successfully.",
+  "data": [
+    { "id": "inv_007", "name": "Stair handrail", "category": "structure", "building": "Building C", "location": "Main staircase", "safetyCritical": true },
+    { "id": "inv_008", "name": "Laboratory microscope", "category": "equipment", "building": "Building C", "location": "Lab 3", "safetyCritical": false }
+  ],
+  "meta": { "total": 3, "page": 1, "perPage": 2 }
+}
+```
+
+---
+
+### 2.8 `GET /api/v1/metrics/maintenance`: maintenance metrics
+
+Average inspection and resolution time and open reports per building.
+
+- **Access:** admin only
+- **Headers:** `Authorization: Bearer <token>`
+- **Success:** `200 OK`
+- **Errors:** `401 UNAUTHORIZED`, `403 FORBIDDEN` (student or staff)
+
+**Example**
+
+```http
+GET /api/v1/metrics/maintenance HTTP/1.1
+Authorization: Bearer admin-token
+```
+
+```json
+{
+  "success": true,
+  "message": "Maintenance metrics retrieved successfully.",
+  "data": {
+    "totalReports": 5,
+    "byStatus": { "PENDING": 3, "IN_PROGRESS": 1, "RESOLVED": 1 },
+    "averageMinutesToInspect": 37.5,
+    "averageMinutesToResolve": 210,
+    "openReportsByBuilding": [
+      { "building": "Building A", "open": 2 },
+      { "building": "Building B", "open": 2 }
+    ]
+  }
+}
+```
+
+---
+
+### 2.9 `GET /api/v1/me`: current user
+
+- **Access:** any signed-in user
+- **Headers:** `Authorization: Bearer <token>`
+- **Success:** `200 OK` with `{ id, name, role }` (staff also have `buildings`)
+- **Errors:** `401 UNAUTHORIZED`
+
+```json
+{
+  "success": true,
+  "message": "Current user retrieved successfully.",
+  "data": { "id": "user-a", "name": "Student A", "role": "student" }
+}
+```
+
+---
+
+### 2.10 `GET /api/v1/health`: health check
+
+- **Access:** public (no token)
+- **Success:** `200 OK`
+
+```json
+{
+  "success": true,
+  "message": "The API is running.",
+  "data": { "status": "UP", "version": "v1", "uptimeSeconds": 42 }
+}
+```
+
+---
+
+### 2.11 `GET /api/v1/greeting`: HTML greeting page
+
+- **Access:** public (no token)
+- **Response:** `200 OK`, `Content-Type: text/html; charset=utf-8`. **This endpoint returns an HTML page, not JSON.** Open `http://localhost:3000/api/v1/greeting` in a browser (the root URL `/` redirects here).
+- **Page contents:** project name and description, team members (name, student ID, contribution), a list of every endpoint (method, path, access, description), and the API status and version. The layout is responsive for desktop and mobile.
+
+---
+
+## 3. Other behaviour
+
+- **`405 Method Not Allowed`:** for example `DELETE /api/v1/reports` or `POST /api/v1/reports/rep_101`. The `Allow` header lists the supported methods.
+- **`404` for unknown routes:** returns the normal JSON error envelope.
+- **CORS:** enabled for all origins, so the Expo web app can call the API during development. `OPTIONS` requests answer `204`.
+
