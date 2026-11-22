@@ -12,7 +12,7 @@ const ADMIN = 'admin-token';
 let ctx;
 
 beforeEach(async () => {
-  // A fresh app (and fresh mock data) for every test keeps tests independent.
+  //A fresh app (and fresh mock data) for every test keeps tests independent
   const { server, store } = createApp({ log: false, aiTriageEnabled: true });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -32,7 +32,7 @@ beforeEach(async () => {
       try {
         json = JSON.parse(text);
       } catch {
-        /* not JSON (HTML page, empty body) */
+        //not JSON (HTML page, empty body)
       }
       return { status: res.status, headers: res.headers, text, json };
     },
@@ -548,5 +548,41 @@ describe('routing errors and safety', () => {
   it('does not echo a bad token back in the response', async () => {
     const res = await ctx.call('GET', api('/reports'), { token: 'super-secret-wrong-token' });
     assert.ok(!res.text.includes('super-secret-wrong-token'));
+  });
+});
+
+describe('HTML greeting page', () => {
+  it('returns styled HTML, not JSON, without a token', async () => {
+    const res = await ctx.call('GET', api('/greeting'));
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'text/html; charset=utf-8');
+    assert.match(res.text, /^<!DOCTYPE html>/);
+    assert.match(res.text, /<meta name="viewport"/);
+    assert.match(res.text, /<style>/);
+  });
+
+  it('shows project, team, status and every endpoint', async () => {
+    const res = await ctx.call('GET', api('/greeting'));
+    assert.match(res.text, /CampusCare/);
+    assert.match(res.text, /Mahmud Aliyev/);
+    assert.match(res.text, /Kamal Mustafayev/);
+    assert.match(res.text, /API is running/);
+    assert.match(res.text, /version v1/);
+    for (const route of [
+      '/api/v1/reports',
+      '/api/v1/reports/:id',
+      '/api/v1/reports/:id/status',
+      '/api/v1/inventory-items',
+      '/api/v1/metrics/maintenance',
+      '/api/v1/health',
+      '/api/v1/greeting',
+      '/api/v1/me',
+    ]) {
+      assert.ok(res.text.includes(`<code>${route}</code>`), `missing ${route}`);
+    }
+  });
+
+  it('only supports GET (405 otherwise)', async () => {
+    assertErrorEnvelope(await ctx.call('POST', api('/greeting'), { body: {} }), 405, 'METHOD_NOT_ALLOWED');
   });
 });
