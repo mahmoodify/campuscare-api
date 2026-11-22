@@ -58,6 +58,17 @@ function update({ user, params, body, store, options }) {
   return ok(200, 'Report updated successfully.', svc.present(store, report));
 }
 
+function remove({ user, params, store }) {
+  const report = svc.findVisible(store, user, params.id);
+  if (user.role === 'student' && report.status !== 'PENDING') {
+    throw E.conflict(
+      `This report is already "${report.status}" and can no longer be deleted. Only pending reports can be withdrawn by their owner.`
+    );
+  }
+  svc.remove(store, report);
+  return ok(200, 'Report deleted successfully.', null);
+}
+
 module.exports = function reportRoutes(P) {
   return [
     {
@@ -87,6 +98,13 @@ module.exports = function reportRoutes(P) {
       access: ['student', 'admin'],
       summary: 'Update a report (students: own pending reports only).',
       handler: update,
+    },
+    {
+      method: 'DELETE',
+      path: `${P}/reports/:id`,
+      access: ['student', 'admin'],
+      summary: 'Delete a report (students: own pending reports only).',
+      handler: remove,
     },
   ];
 };
