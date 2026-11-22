@@ -40,6 +40,24 @@ function create({ user, body, store, options }) {
   });
 }
 
+function update({ user, params, body, store, options }) {
+  const report = svc.findVisible(store, user, params.id); // 404
+  const { value, errors } = V.validateReportBody(body, store); // 400
+  if (errors.length) throw E.validation(errors);
+
+  if (user.role === 'student' && report.status !== 'PENDING') {
+    throw E.conflict(
+      `This report is already "${report.status}" and can no longer be edited. Only pending reports can be changed by their owner.`
+    );
+  }
+  const duplicate = svc.findDuplicate(store, { ownerId: report.ownerId, ...value, excludeId: report.id });
+  if (duplicate) {
+    throw E.conflict(`Another open report (${duplicate.id}) already exists for this item with the same issue type.`);
+  }
+  svc.replace(store, report, value, options.aiTriageEnabled);
+  return ok(200, 'Report updated successfully.', svc.present(store, report));
+}
+
 module.exports = function reportRoutes(P) {
   return [
     {
@@ -62,6 +80,13 @@ module.exports = function reportRoutes(P) {
       access: ['student', 'admin'],
       summary: 'Create a report for an inventory item and issue type.',
       handler: create,
+    },
+    {
+      method: 'PUT',
+      path: `${P}/reports/:id`,
+      access: ['student', 'admin'],
+      summary: 'Update a report (students: own pending reports only).',
+      handler: update,
     },
   ];
 };
