@@ -90,6 +90,198 @@ describe('authentication (401)', () => {
   });
 });
 
+describe('reading reports and ownership', () => {
+  it('user A lists only their own reports', async () => {
+    const res = await ctx.call('GET', api('/reports'), { token: A });
+    assert.equal(res.status, 200);
+    assert.equal(res.json.success, true);
+    assert.ok(res.json.data.length >= 2);
+    assert.ok(res.json.data.every((r) => r.ownerId === 'user-a'));
+    assert.deepEqual(res.json.meta, { total: res.json.data.length, page: 1, perPage: 10 });
+  });
+
+  it('user B lists only their own reports', async () => {
+    const res = await ctx.call('GET', api('/reports'), { token: B });
+    assert.ok(res.json.data.length >= 2);
+    assert.ok(res.json.data.every((r) => r.ownerId === 'user-b'));
+  });
+
+  it('admin lists every report', async () => {
+    const res = await ctx.call('GET', api('/reports'), { token: ADMIN });
+    assert.equal(res.json.meta.total, ctx.store.reports.length);
+    const owners = new Set(res.json.data.map((r) => r.ownerId));
+    assert.ok(owners.has('user-a') && owners.has('user-b'));
+  });
+
+  it('owner can read their own report', async () => {
+    const res = await ctx.call('GET', api('/reports/rep_101'), { token: A });
+    assert.equal(res.status, 200);
+    assert.equal(res.json.data.id, 'rep_101');
+    assert.equal(res.json.data.inventoryItem.name, 'Ceiling light');
+  });
+
+  it("user A cannot read user B's report (404, same as a missing one)", async () => {
+    const res = await ctx.call('GET', api('/reports/rep_103'), { token: A });
+    assertErrorEnvelope(res, 404, 'NOT_FOUND');
+    const missing = await ctx.call('GET', api('/reports/rep_103'.replace('103', '999')), { token: A });
+    assert.equal(res.json.error.message.replace('rep_103', 'X'), missing.json.error.message.replace('rep_999', 'X'));
+  });
+
+  it("user B cannot read user A's report", async () => {
+    const res = await ctx.call('GET', api('/reports/rep_101'), { token: B });
+    assertErrorEnvelope(res, 404, 'NOT_FOUND');
+  });
+
+  it('admin can read any report', async () => {
+    const a = await ctx.call('GET', api('/reports/rep_101'), { token: ADMIN });
+    const b = await ctx.call('GET', api('/reports/rep_103'), { token: ADMIN });
+    assert.equal(a.status, 200);
+    assert.equal(b.status, 200);
+  });
+
+  it('returns 404 for a non-existent ID', async () => {
+    const res = await ctx.call('GET', api('/reports/rep_999'), { token: ADMIN });
+    assertErrorEnvelope(res, 404, 'NOT_FOUND');
+  });
+
+  it('computes inspection and resolution times', async () => {
+    const res = await ctx.call('GET', api('/reports/rep_104'), { token: ADMIN });
+    assert.equal(res.json.data.minutesToInspect, 45);
+    assert.equal(res.json.data.minutesToResolve, 210);
+  });
+});
+
+describe('list query parameters', () => {
+  it('filters by status', async () => {
+    const res = await ctx.call('GET', api('/reports?status=PENDING'), { token: ADMIN });
+    assert.ok(res.json.data.length > 0);
+    assert.ok(res.json.data.every((r) => r.status === 'PENDING'));
+  });
+
+  it('paginates', async () => {
+    const res = await ctx.call('GET', api('/reports?perPage=2&page=2'), { token: ADMIN });
+    assert.equal(res.json.data.length, 2);
+    assert.deepEqual(res.json.meta, { total: 5, page: 2, perPage: 2 });
+  });
+
+  it('sorts by priority, highest first', async () => {
+    const res = await ctx.call('GET', api('/reports?sort=-priority'), { token: ADMIN });
+    assert.equal(res.json.data[0].priority, 'HIGH');
+    assert.equal(res.json.data.at(-1).priority, 'LOW');
+  });
+
+  it('rejects invalid and unknown query parameters with 400', async () => {
+    const res = await ctx.call('GET', api('/reports?status=DONE&page=0&perPage=1000&colour=red'), { token: ADMIN });
+    assertErrorEnvelope(res, 400, 'VALIDATION_ERROR');
+    const fields = res.json.error.details.map((d) => d.field).sort();
+    assert.deepEqual(fields, ['colour', 'page', 'perPage', 'status']);
+  });
+});
+
+describe('creating reports (POST)', () => {
+  it('creates a report: 201, Location header, owner, routing and triage', async () => {
+    const res = await ctx.call('POST', api('/reports'), { token: A, body: validReport });
+    assert.equal(res.status, 201);
+    assert.equal(res.json.success, true);
+    assert.equal(res.headers.get('location'), `/api/v1/reports/${res.json.data.id}`);
+    assert.equal(res.json.data.ownerId, 'user-a');
+    assert.equal(res.json.data.status, 'PENDING');
+    assert.equal(res.json.data.priority, 'HIGH'); // emergency exit sign is safety-critical
+    assert.equal(res.json.data.assignedTo, 'staff-1'); // Building A -> staff-1
+    const again = await ctx.call('GET', res.headers.get('location'), { token: A });
+    assert.equal(again.status, 200);
+  });
+
+  it('comment is optional', async () => {
+    const res = await ctx.call('POST', api('/reports'), { token: A, body: { inventoryItemId: 'inv_006', issueType: 'BROKEN' } });
+    assert.equal(res.status, 201);
+    assert.equal(res.json.data.comment, null);
+    assert.equal(res.json.data.priority, 'MEDIUM');
+  });
+
+  it('routes Building C reports to staff-2', async () => {
+    const res = await ctx.call('POST', api('/reports'), { token: A, body: { inventoryItemId: 'inv_008', issueType: 'BROKEN' } });
+    assert.equal(res.json.data.assignedTo, 'staff-2');
+  });
+
+  it('uses default MEDIUM priority when AI triage is unavailable (FR-11)', async () => {
+    const { server } = createApp({ log: false, aiTriageEnabled: false });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.address().port}/api/v1/reports`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${A}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(validReport),
+      });
+      const json = await res.json();
+      assert.equal(res.status, 201);
+      assert.equal(json.data.priority, 'MEDIUM');
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('rejects missing required fields (400 with details)', async () => {
+    const res = await ctx.call('POST', api('/reports'), { token: A, body: {} });
+    assertErrorEnvelope(res, 400, 'VALIDATION_ERROR');
+    const fields = res.json.error.details.map((d) => d.field);
+    assert.deepEqual(fields, ['inventoryItemId', 'issueType']);
+  });
+
+  it('rejects wrong types, bad enum values and bad lengths', async () => {
+    const res = await ctx.call('POST', api('/reports'), {
+      token: A,
+      body: { inventoryItemId: 123, issueType: 'EXPLODED', comment: 'x' },
+    });
+    assertErrorEnvelope(res, 400, 'VALIDATION_ERROR');
+    assert.equal(res.json.error.details.length, 3);
+  });
+
+  it('rejects an over-long comment', async () => {
+    const res = await ctx.call('POST', api('/reports'), { token: A, body: { ...validReport, comment: 'x'.repeat(201) } });
+    assertErrorEnvelope(res, 400, 'VALIDATION_ERROR');
+    assert.equal(res.json.error.details[0].field, 'comment');
+  });
+
+  it('rejects an inventory item that does not exist', async () => {
+    const res = await ctx.call('POST', api('/reports'), { token: A, body: { inventoryItemId: 'inv_999', issueType: 'BROKEN' } });
+    assertErrorEnvelope(res, 400, 'VALIDATION_ERROR');
+    assert.match(res.json.error.details[0].message, /does not exist/);
+  });
+
+  it('rejects unknown and read-only fields (cannot set owner or status)', async () => {
+    const res = await ctx.call('POST', api('/reports'), {
+      token: A,
+      body: { ...validReport, ownerId: 'user-b', status: 'RESOLVED' },
+    });
+    assertErrorEnvelope(res, 400, 'VALIDATION_ERROR');
+    assert.deepEqual(res.json.error.details.map((d) => d.field).sort(), ['ownerId', 'status']);
+  });
+
+  it('rejects malformed JSON with 400 INVALID_JSON', async () => {
+    const res = await ctx.call('POST', api('/reports'), { token: A, rawBody: '{"inventoryItemId": ' });
+    assertErrorEnvelope(res, 400, 'INVALID_JSON');
+  });
+
+  it('rejects a body that is not a JSON object', async () => {
+    const res = await ctx.call('POST', api('/reports'), { token: A, rawBody: '[1,2,3]' });
+    assertErrorEnvelope(res, 400, 'VALIDATION_ERROR');
+  });
+
+  it('returns 409 for a duplicate open report', async () => {
+    const first = await ctx.call('POST', api('/reports'), { token: A, body: validReport });
+    assert.equal(first.status, 201);
+    const second = await ctx.call('POST', api('/reports'), { token: A, body: validReport });
+    assertErrorEnvelope(second, 409, 'CONFLICT');
+  });
+
+  it('staff cannot create reports (403)', async () => {
+    const res = await ctx.call('POST', api('/reports'), { token: STAFF, body: validReport });
+    assertErrorEnvelope(res, 403, 'FORBIDDEN');
+  });
+});
+
 describe('routing errors and safety', () => {
   it('returns 405 with an Allow header for an unsupported method', async () => {
     const res = await ctx.call('DELETE', api('/reports'), { token: ADMIN });
