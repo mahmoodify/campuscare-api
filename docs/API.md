@@ -352,3 +352,182 @@ HTTP/1.1 400 Bad Request
 ```
 
 ---
+
+### 2.4 `PUT /api/v1/reports/{id}`: update a report
+
+`PUT` replaces the writable part of the report, so send all required fields. An omitted `comment` is cleared. The priority is recalculated and the report is re-routed to match the new item.
+
+- **Access:** student (own report, only while `PENDING`), admin (any report, any status). Staff get `403`: they change status through `PUT /reports/{id}/status`.
+- **Headers:** `Authorization: Bearer <token>`, `Content-Type: application/json`
+- **Path parameter:** `id`
+- **Body parameters:** same fields and rules as `POST /reports` (`inventoryItemId` and `issueType` required, `comment` optional).
+- **Success:** `200 OK`, `data` is the updated report. Repeating the same request gives the same result (idempotent).
+- **Errors:**
+
+| Status | Code | Cause |
+|---:|---|---|
+| 400 | `INVALID_JSON`, `VALIDATION_ERROR` | Bad body (see 2.3) |
+| 401 | `UNAUTHORIZED` | Missing, malformed or invalid token |
+| 403 | `FORBIDDEN` | Caller is staff |
+| 404 | `NOT_FOUND` | ID does not exist or belongs to another user |
+| 409 | `CONFLICT` | A student edits a report that is no longer `PENDING`, or the update would duplicate another open report of the same owner |
+
+**Example**
+
+```http
+PUT /api/v1/reports/rep_101 HTTP/1.1
+Authorization: Bearer user-a-token
+Content-Type: application/json
+
+{ "inventoryItemId": "inv_001", "issueType": "MISSING", "comment": "The bulb was removed" }
+```
+
+```json
+{
+  "success": true,
+  "message": "Report updated successfully.",
+  "data": {
+    "id": "rep_101",
+    "inventoryItem": { "id": "inv_001", "name": "Ceiling light", "building": "Building A", "location": "Room 204" },
+    "issueType": "MISSING",
+    "comment": "The bulb was removed",
+    "status": "PENDING",
+    "priority": "MEDIUM",
+    "ownerId": "user-a",
+    "assignedTo": "staff-1",
+    "createdAt": "2026-11-12T09:15:00.000Z",
+    "inspectedAt": null,
+    "resolvedAt": null,
+    "minutesToInspect": null,
+    "minutesToResolve": null
+  }
+}
+```
+
+**Example: conflict** (`PUT /reports/rep_102` as Student A, report is already in progress)
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "CONFLICT",
+    "message": "This report is already \"IN_PROGRESS\" and can no longer be edited. Only pending reports can be changed by their owner."
+  }
+}
+```
+
+---
+
+### 2.5 `DELETE /api/v1/reports/{id}`: delete a report
+
+- **Access:** student (own report, only while `PENDING`), admin (any). Staff get `403`.
+- **Headers:** `Authorization: Bearer <token>`
+- **Path parameter:** `id`
+- **Success:** `200 OK`, `data` is `null`.
+- **Errors:**
+
+| Status | Code | Cause |
+|---:|---|---|
+| 401 | `UNAUTHORIZED` | Missing, malformed or invalid token |
+| 403 | `FORBIDDEN` | Caller is staff |
+| 404 | `NOT_FOUND` | ID does not exist (including already deleted) or belongs to another user |
+| 409 | `CONFLICT` | A student deletes a report that is no longer `PENDING` |
+
+**Example**
+
+```http
+DELETE /api/v1/reports/rep_101 HTTP/1.1
+Authorization: Bearer user-a-token
+```
+
+```json
+{
+  "success": true,
+  "message": "Report deleted successfully.",
+  "data": null
+}
+```
+
+---
+
+### 2.6 `PUT /api/v1/reports/{id}/status`: change report status
+
+Used by maintenance staff to record progress. Allowed transitions: `PENDING → IN_PROGRESS → RESOLVED`. Moving to `IN_PROGRESS` records `inspectedAt`; moving to `RESOLVED` records `resolvedAt`. Sending the status the report already has is a harmless `200`.
+
+- **Access:** staff (only reports assigned to them), admin (any). Students get `403`.
+- **Headers:** `Authorization: Bearer <token>`, `Content-Type: application/json`
+- **Path parameter:** `id`
+- **Body parameters:**
+
+| Field | Type | Required | Rules |
+|---|---|---|---|
+| `status` | string | yes | `PENDING`, `IN_PROGRESS` or `RESOLVED`, and a valid next step |
+
+- **Success:** `200 OK`, `data` is the updated report.
+- **Errors:**
+
+| Status | Code | Cause |
+|---:|---|---|
+| 400 | `INVALID_JSON`, `VALIDATION_ERROR` | Bad body or invalid `status` value |
+| 401 | `UNAUTHORIZED` | Missing, malformed or invalid token |
+| 403 | `FORBIDDEN` | Caller is a student |
+| 404 | `NOT_FOUND` | ID does not exist, or staff member is not assigned to it |
+| 409 | `CONFLICT` | Invalid transition (skipping a step, or reopening a resolved report) |
+
+**Example**
+
+```http
+PUT /api/v1/reports/rep_101/status HTTP/1.1
+Authorization: Bearer staff-token
+Content-Type: application/json
+
+{ "status": "IN_PROGRESS" }
+```
+
+```json
+{
+  "success": true,
+  "message": "Report status changed to \"IN_PROGRESS\".",
+  "data": {
+    "id": "rep_101",
+    "inventoryItem": { "id": "inv_001", "name": "Ceiling light", "building": "Building A", "location": "Room 204" },
+    "issueType": "BROKEN",
+    "comment": "Flickers all the time",
+    "status": "IN_PROGRESS",
+    "priority": "MEDIUM",
+    "ownerId": "user-a",
+    "assignedTo": "staff-1",
+    "createdAt": "2026-11-12T09:15:00.000Z",
+    "inspectedAt": "2026-11-13T20:20:00.000Z",
+    "resolvedAt": null,
+    "minutesToInspect": 1625,
+    "minutesToResolve": null
+  }
+}
+```
+
+**Example: conflict** (`{ "status": "RESOLVED" }` on a `PENDING` report)
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "CONFLICT",
+    "message": "Cannot change status from \"PENDING\" to \"RESOLVED\". The only allowed next status is \"IN_PROGRESS\"."
+  }
+}
+```
+
+**Example: forbidden** (same request with `user-a-token`)
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "Your role \"student\" is not allowed to perform this action. Allowed roles: staff, admin."
+  }
+}
+```
+
+---
