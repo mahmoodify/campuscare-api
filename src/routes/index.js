@@ -1,14 +1,16 @@
 'use strict';
 
 const { API_PREFIX } = require('../constants');
+const greetingRoutes = require('./greeting');
 const systemRoutes = require('./system');
 const inventoryRoutes = require('./inventory');
 const reportRoutes = require('./reports');
 const metricsRoutes = require('./metrics');
 
-/** The single route table: used for routing, 405 handling and the greeting page's endpoint list. */
+//The single route table: used for routing, 405 handling and the greeting page's endpoint list
 function buildRoutes() {
   const routes = [
+    ...greetingRoutes(API_PREFIX),
     ...systemRoutes(API_PREFIX),
     ...inventoryRoutes(API_PREFIX),
     ...reportRoutes(API_PREFIX),
