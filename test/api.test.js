@@ -282,6 +282,186 @@ describe('creating reports (POST)', () => {
   });
 });
 
+describe('updating reports (PUT)', () => {
+  it('owner can update their pending report', async () => {
+    const res = await ctx.call('PUT', api('/reports/rep_101'), {
+      token: A,
+      body: { inventoryItemId: 'inv_002', issueType: 'MISSING', comment: 'Sign has been removed' },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.json.data.issueType, 'MISSING');
+    assert.equal(res.json.data.inventoryItem.id, 'inv_002');
+    assert.equal(res.json.data.priority, 'HIGH'); // re-triaged
+    assert.equal(res.json.data.ownerId, 'user-a'); // owner never changes
+  });
+
+  it('PUT is idempotent: the same request twice gives the same result', async () => {
+    const body = { inventoryItemId: 'inv_001', issueType: 'MISSING' };
+    const first = await ctx.call('PUT', api('/reports/rep_101'), { token: A, body });
+    const second = await ctx.call('PUT', api('/reports/rep_101'), { token: A, body });
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+    assert.deepEqual(first.json.data, second.json.data);
+  });
+
+  it("user A cannot update user B's report", async () => {
+    const res = await ctx.call('PUT', api('/reports/rep_103'), { token: A, body: validReport });
+    assertErrorEnvelope(res, 404, 'NOT_FOUND');
+    assert.equal(ctx.store.reports.find((r) => r.id === 'rep_103').inventoryItemId, 'inv_003');
+  });
+
+  it("user B cannot update user A's report", async () => {
+    const res = await ctx.call('PUT', api('/reports/rep_101'), { token: B, body: validReport });
+    assertErrorEnvelope(res, 404, 'NOT_FOUND');
+  });
+
+  it('admin can update any report, even one in progress', async () => {
+    const res = await ctx.call('PUT', api('/reports/rep_102'), {
+      token: ADMIN,
+      body: { inventoryItemId: 'inv_004', issueType: 'BROKEN' },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.json.data.issueType, 'BROKEN');
+  });
+
+  it('student cannot edit a report that is already in progress (409)', async () => {
+    const res = await ctx.call('PUT', api('/reports/rep_102'), { token: A, body: validReport });
+    assertErrorEnvelope(res, 409, 'CONFLICT');
+  });
+
+  it('validates the body on update (400)', async () => {
+    const res = await ctx.call('PUT', api('/reports/rep_101'), { token: A, body: { issueType: 'NOPE' } });
+    assertErrorEnvelope(res, 400, 'VALIDATION_ERROR');
+  });
+
+  it('returns 404 when updating a non-existent report', async () => {
+    const res = await ctx.call('PUT', api('/reports/rep_999'), { token: A, body: validReport });
+    assertErrorEnvelope(res, 404, 'NOT_FOUND');
+  });
+
+  it('staff cannot use the general update endpoint (403)', async () => {
+    const res = await ctx.call('PUT', api('/reports/rep_101'), { token: STAFF, body: validReport });
+    assertErrorEnvelope(res, 403, 'FORBIDDEN');
+  });
+
+  it('refuses an update that would duplicate another open report (409)', async () => {
+    //rep_101 is inv_001/BROKEN. Create a second report, then try to turn it into the same thing
+    const created = await ctx.call('POST', api('/reports'), { token: A, body: { inventoryItemId: 'inv_006', issueType: 'BROKEN' } });
+    const res = await ctx.call('PUT', api(`/reports/${created.json.data.id}`), {
+      token: A,
+      body: { inventoryItemId: 'inv_001', issueType: 'BROKEN' },
+    });
+    assertErrorEnvelope(res, 409, 'CONFLICT');
+  });
+});
+
+describe('deleting reports (DELETE)', () => {
+  it('owner can delete their own pending report', async () => {
+    const res = await ctx.call('DELETE', api('/reports/rep_101'), { token: A });
+    assert.equal(res.status, 200);
+    assert.equal(res.json.success, true);
+    assert.equal(res.json.data, null);
+    const after = await ctx.call('GET', api('/reports/rep_101'), { token: A });
+    assert.equal(after.status, 404);
+  });
+
+  it('deleting twice: first 200, then 404 (state is the same)', async () => {
+    const first = await ctx.call('DELETE', api('/reports/rep_101'), { token: A });
+    const second = await ctx.call('DELETE', api('/reports/rep_101'), { token: A });
+    assert.equal(first.status, 200);
+    assertErrorEnvelope(second, 404, 'NOT_FOUND');
+  });
+
+  it("user A cannot delete user B's report", async () => {
+    const res = await ctx.call('DELETE', api('/reports/rep_103'), { token: A });
+    assertErrorEnvelope(res, 404, 'NOT_FOUND');
+    assert.ok(ctx.store.reports.some((r) => r.id === 'rep_103'));
+  });
+
+  it("user B cannot delete user A's report", async () => {
+    const res = await ctx.call('DELETE', api('/reports/rep_101'), { token: B });
+    assertErrorEnvelope(res, 404, 'NOT_FOUND');
+    assert.ok(ctx.store.reports.some((r) => r.id === 'rep_101'));
+  });
+
+  it('admin can delete any report', async () => {
+    const res = await ctx.call('DELETE', api('/reports/rep_103'), { token: ADMIN });
+    assert.equal(res.status, 200);
+    assert.ok(!ctx.store.reports.some((r) => r.id === 'rep_103'));
+  });
+
+  it('student cannot delete a report that is already in progress (409)', async () => {
+    const res = await ctx.call('DELETE', api('/reports/rep_102'), { token: A });
+    assertErrorEnvelope(res, 409, 'CONFLICT');
+  });
+
+  it('staff cannot delete reports (403)', async () => {
+    const res = await ctx.call('DELETE', api('/reports/rep_101'), { token: STAFF });
+    assertErrorEnvelope(res, 403, 'FORBIDDEN');
+  });
+
+  it('returns 404 when deleting a non-existent report', async () => {
+    const res = await ctx.call('DELETE', api('/reports/rep_999'), { token: ADMIN });
+    assertErrorEnvelope(res, 404, 'NOT_FOUND');
+  });
+});
+
+describe('status workflow (PUT /reports/{id}/status)', () => {
+  it('staff move a report PENDING -> IN_PROGRESS -> RESOLVED and times are recorded', async () => {
+    const start = await ctx.call('PUT', api('/reports/rep_101/status'), { token: STAFF, body: { status: 'IN_PROGRESS' } });
+    assert.equal(start.status, 200);
+    assert.equal(start.json.data.status, 'IN_PROGRESS');
+    assert.ok(start.json.data.inspectedAt);
+    assert.equal(start.json.data.resolvedAt, null);
+
+    const done = await ctx.call('PUT', api('/reports/rep_101/status'), { token: STAFF, body: { status: 'RESOLVED' } });
+    assert.equal(done.status, 200);
+    assert.ok(done.json.data.resolvedAt);
+    assert.equal(typeof done.json.data.minutesToResolve, 'number');
+  });
+
+  it('is idempotent: repeating the same status is a harmless 200', async () => {
+    await ctx.call('PUT', api('/reports/rep_101/status'), { token: STAFF, body: { status: 'IN_PROGRESS' } });
+    const before = ctx.store.reports.find((r) => r.id === 'rep_101').inspectedAt;
+    const again = await ctx.call('PUT', api('/reports/rep_101/status'), { token: STAFF, body: { status: 'IN_PROGRESS' } });
+    assert.equal(again.status, 200);
+    assert.equal(ctx.store.reports.find((r) => r.id === 'rep_101').inspectedAt, before);
+  });
+
+  it('rejects skipping a step (409)', async () => {
+    const res = await ctx.call('PUT', api('/reports/rep_101/status'), { token: STAFF, body: { status: 'RESOLVED' } });
+    assertErrorEnvelope(res, 409, 'CONFLICT');
+  });
+
+  it('rejects reopening a resolved report (409)', async () => {
+    const res = await ctx.call('PUT', api('/reports/rep_104/status'), { token: ADMIN, body: { status: 'PENDING' } });
+    assertErrorEnvelope(res, 409, 'CONFLICT');
+  });
+
+  it('rejects an invalid status value (400)', async () => {
+    const res = await ctx.call('PUT', api('/reports/rep_101/status'), { token: STAFF, body: { status: 'DONE' } });
+    assertErrorEnvelope(res, 400, 'VALIDATION_ERROR');
+  });
+
+  it('students cannot change status (403), even on their own report', async () => {
+    const res = await ctx.call('PUT', api('/reports/rep_101/status'), { token: A, body: { status: 'IN_PROGRESS' } });
+    assertErrorEnvelope(res, 403, 'FORBIDDEN');
+  });
+
+  it('staff only see and update reports assigned to them', async () => {
+    const list = await ctx.call('GET', api('/reports'), { token: STAFF });
+    assert.ok(list.json.data.every((r) => r.assignedTo === 'staff-1'));
+    assert.ok(!list.json.data.some((r) => r.id === 'rep_104')); // assigned to staff-2
+    const res = await ctx.call('PUT', api('/reports/rep_104/status'), { token: STAFF, body: { status: 'IN_PROGRESS' } });
+    assertErrorEnvelope(res, 404, 'NOT_FOUND');
+  });
+
+  it('returns 404 for a non-existent report', async () => {
+    const res = await ctx.call('PUT', api('/reports/rep_999/status'), { token: ADMIN, body: { status: 'IN_PROGRESS' } });
+    assertErrorEnvelope(res, 404, 'NOT_FOUND');
+  });
+});
+
 describe('routing errors and safety', () => {
   it('returns 405 with an Allow header for an unsupported method', async () => {
     const res = await ctx.call('DELETE', api('/reports'), { token: ADMIN });
