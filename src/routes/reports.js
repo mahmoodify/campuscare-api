@@ -24,6 +24,22 @@ function getOne({ user, params, store }) {
   return ok(200, 'Report retrieved successfully.', svc.present(store, report));
 }
 
+function create({ user, body, store, options }) {
+  const { value, errors } = V.validateReportBody(body, store);
+  if (errors.length) throw E.validation(errors);
+
+  const duplicate = svc.findDuplicate(store, { ownerId: user.id, ...value });
+  if (duplicate) {
+    throw E.conflict(
+      `You already have an open report (${duplicate.id}) for this item with the same issue type. Update or delete it instead of creating a duplicate.`
+    );
+  }
+  const report = svc.create(store, { ownerId: user.id, value, aiEnabled: options.aiTriageEnabled });
+  return ok(201, 'Report created successfully.', svc.present(store, report), undefined, {
+    Location: `/api/v1/reports/${report.id}`,
+  });
+}
+
 module.exports = function reportRoutes(P) {
   return [
     {
@@ -39,6 +55,13 @@ module.exports = function reportRoutes(P) {
       access: ALL,
       summary: 'Get one report by ID.',
       handler: getOne,
+    },
+    {
+      method: 'POST',
+      path: `${P}/reports`,
+      access: ['student', 'admin'],
+      summary: 'Create a report for an inventory item and issue type.',
+      handler: create,
     },
   ];
 };
