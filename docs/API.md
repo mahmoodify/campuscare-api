@@ -151,3 +151,204 @@ When a regular user asks for a report that belongs to someone else, the API retu
 Non-existent ID for `404` demos: **`rep_999`**. Inventory IDs: `inv_001` to `inv_009`.
 
 ---
+
+## 2. Endpoints
+
+### 2.1 `GET /api/v1/reports`: list reports
+
+- **Access:** student, staff, admin (results are limited by role, see 1.5)
+- **Headers:** `Authorization: Bearer <token>`
+- **Query parameters** (all optional; unknown parameters are rejected):
+
+| Name | Type | Default | Rules |
+|---|---|---|---|
+| `status` | string | | `PENDING`, `IN_PROGRESS`, `RESOLVED` |
+| `priority` | string | | `HIGH`, `MEDIUM`, `LOW` |
+| `issueType` | string | | `BROKEN`, `MISSING` |
+| `sort` | string | `-createdAt` | `createdAt`, `-createdAt`, `priority`, `-priority` (`-` = descending) |
+| `page` | integer | `1` | ≥ 1 |
+| `perPage` | integer | `10` | 1–100 |
+
+- **Success:** `200 OK`, `data` is an array of reports, plus `meta`.
+- **Errors:**
+
+| Status | Code | Cause |
+|---:|---|---|
+| 400 | `VALIDATION_ERROR` | Invalid or unknown query parameter |
+| 401 | `UNAUTHORIZED` | Missing, malformed or invalid token |
+
+**Example**
+
+```http
+GET /api/v1/reports?status=PENDING&perPage=1 HTTP/1.1
+Authorization: Bearer user-a-token
+```
+
+```json
+{
+  "success": true,
+  "message": "Reports retrieved successfully.",
+  "data": [
+    {
+      "id": "rep_101",
+      "inventoryItem": { "id": "inv_001", "name": "Ceiling light", "building": "Building A", "location": "Room 204" },
+      "issueType": "BROKEN",
+      "comment": "Flickers all the time",
+      "status": "PENDING",
+      "priority": "MEDIUM",
+      "ownerId": "user-a",
+      "assignedTo": "staff-1",
+      "createdAt": "2026-11-12T09:15:00.000Z",
+      "inspectedAt": null,
+      "resolvedAt": null,
+      "minutesToInspect": null,
+      "minutesToResolve": null
+    }
+  ],
+  "meta": { "total": 1, "page": 1, "perPage": 1 }
+}
+```
+
+---
+
+### 2.2 `GET /api/v1/reports/{id}`: get one report
+
+- **Access:** student (own), staff (assigned), admin (any)
+- **Headers:** `Authorization: Bearer <token>`
+- **Path parameter:** `id`: report ID, e.g. `rep_101`
+- **Success:** `200 OK`, `data` is one report.
+- **Errors:**
+
+| Status | Code | Cause |
+|---:|---|---|
+| 401 | `UNAUTHORIZED` | Missing, malformed or invalid token |
+| 404 | `NOT_FOUND` | The ID does not exist, **or** the report belongs to another user (see 1.6) |
+
+**Example**
+
+```http
+GET /api/v1/reports/rep_103 HTTP/1.1
+Authorization: Bearer user-a-token
+```
+
+```http
+HTTP/1.1 404 Not Found
+```
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "Report \"rep_103\" was not found."
+  }
+}
+```
+
+---
+
+### 2.3 `POST /api/v1/reports`: create a report
+
+- **Access:** student, admin (staff get `403`)
+- **Headers:** `Authorization: Bearer <token>`, `Content-Type: application/json`
+- **Body parameters:**
+
+| Field | Type | Required | Rules |
+|---|---|---|---|
+| `inventoryItemId` | string | yes | Must be an existing inventory item (`GET /inventory-items`) |
+| `issueType` | string | yes | `BROKEN` or `MISSING` |
+| `comment` | string | no | 3–200 characters after trimming |
+
+Any other field (for example `ownerId`, `status`, `priority`) is rejected: the server decides those values. The owner is always the caller.
+
+- **Success:** `201 Created` with a `Location` header (`/api/v1/reports/{id}`). The report starts as `PENDING`, gets a priority from triage, and is routed to the staff member responsible for the item's building.
+- **Errors:**
+
+| Status | Code | Cause |
+|---:|---|---|
+| 400 | `INVALID_JSON` | Body is not valid JSON |
+| 400 | `VALIDATION_ERROR` | Missing, wrongly typed, out-of-range or unknown fields; inventory item does not exist; body is not an object |
+| 401 | `UNAUTHORIZED` | Missing, malformed or invalid token |
+| 403 | `FORBIDDEN` | Caller is staff |
+| 409 | `CONFLICT` | The caller already has an open (not `RESOLVED`) report for the same item and issue type |
+
+**Example: success**
+
+```http
+POST /api/v1/reports HTTP/1.1
+Authorization: Bearer user-a-token
+Content-Type: application/json
+
+{ "inventoryItemId": "inv_002", "issueType": "BROKEN", "comment": "Exit sign is dark" }
+```
+
+```http
+HTTP/1.1 201 Created
+Location: /api/v1/reports/rep_106
+```
+
+```json
+{
+  "success": true,
+  "message": "Report created successfully.",
+  "data": {
+    "id": "rep_106",
+    "inventoryItem": { "id": "inv_002", "name": "Emergency exit sign", "building": "Building A", "location": "Ground floor corridor" },
+    "issueType": "BROKEN",
+    "comment": "Exit sign is dark",
+    "status": "PENDING",
+    "priority": "HIGH",
+    "ownerId": "user-a",
+    "assignedTo": "staff-1",
+    "createdAt": "2026-11-13T20:15:00.000Z",
+    "inspectedAt": null,
+    "resolvedAt": null,
+    "minutesToInspect": null,
+    "minutesToResolve": null
+  }
+}
+```
+
+**Example: validation error**
+
+```http
+POST /api/v1/reports HTTP/1.1
+Authorization: Bearer user-a-token
+Content-Type: application/json
+
+{ "issueType": "EXPLODED", "comment": "x", "ownerId": "user-b" }
+```
+
+```http
+HTTP/1.1 400 Bad Request
+```
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "The request contains invalid or missing fields.",
+    "details": [
+      { "field": "ownerId", "message": "Unknown or read-only field \"ownerId\". Allowed fields: inventoryItemId, issueType, comment." },
+      { "field": "inventoryItemId", "message": "inventoryItemId is required." },
+      { "field": "issueType", "message": "issueType must be one of: BROKEN, MISSING." },
+      { "field": "comment", "message": "comment must contain between 3 and 200 characters when provided." }
+    ]
+  }
+}
+```
+
+**Example: conflict** (sending the same valid request twice)
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "CONFLICT",
+    "message": "You already have an open report (rep_106) for this item with the same issue type. Update or delete it instead of creating a duplicate."
+  }
+}
+```
+
+---
