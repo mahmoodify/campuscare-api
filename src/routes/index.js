@@ -2,12 +2,14 @@
 
 const { API_PREFIX } = require('../constants');
 const systemRoutes = require('./system');
+const inventoryRoutes = require('./inventory');
 const reportRoutes = require('./reports');
 
 /** The single route table: used for routing, 405 handling and the greeting page's endpoint list. */
 function buildRoutes() {
   const routes = [
     ...systemRoutes(API_PREFIX),
+    ...inventoryRoutes(API_PREFIX),
     ...reportRoutes(API_PREFIX),
   ];
   return routes.map((route) => {
