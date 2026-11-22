@@ -406,6 +406,62 @@ describe('deleting reports (DELETE)', () => {
   });
 });
 
+describe('status workflow (PUT /reports/{id}/status)', () => {
+  it('staff move a report PENDING -> IN_PROGRESS -> RESOLVED and times are recorded', async () => {
+    const start = await ctx.call('PUT', api('/reports/rep_101/status'), { token: STAFF, body: { status: 'IN_PROGRESS' } });
+    assert.equal(start.status, 200);
+    assert.equal(start.json.data.status, 'IN_PROGRESS');
+    assert.ok(start.json.data.inspectedAt);
+    assert.equal(start.json.data.resolvedAt, null);
+
+    const done = await ctx.call('PUT', api('/reports/rep_101/status'), { token: STAFF, body: { status: 'RESOLVED' } });
+    assert.equal(done.status, 200);
+    assert.ok(done.json.data.resolvedAt);
+    assert.equal(typeof done.json.data.minutesToResolve, 'number');
+  });
+
+  it('is idempotent: repeating the same status is a harmless 200', async () => {
+    await ctx.call('PUT', api('/reports/rep_101/status'), { token: STAFF, body: { status: 'IN_PROGRESS' } });
+    const before = ctx.store.reports.find((r) => r.id === 'rep_101').inspectedAt;
+    const again = await ctx.call('PUT', api('/reports/rep_101/status'), { token: STAFF, body: { status: 'IN_PROGRESS' } });
+    assert.equal(again.status, 200);
+    assert.equal(ctx.store.reports.find((r) => r.id === 'rep_101').inspectedAt, before);
+  });
+
+  it('rejects skipping a step (409)', async () => {
+    const res = await ctx.call('PUT', api('/reports/rep_101/status'), { token: STAFF, body: { status: 'RESOLVED' } });
+    assertErrorEnvelope(res, 409, 'CONFLICT');
+  });
+
+  it('rejects reopening a resolved report (409)', async () => {
+    const res = await ctx.call('PUT', api('/reports/rep_104/status'), { token: ADMIN, body: { status: 'PENDING' } });
+    assertErrorEnvelope(res, 409, 'CONFLICT');
+  });
+
+  it('rejects an invalid status value (400)', async () => {
+    const res = await ctx.call('PUT', api('/reports/rep_101/status'), { token: STAFF, body: { status: 'DONE' } });
+    assertErrorEnvelope(res, 400, 'VALIDATION_ERROR');
+  });
+
+  it('students cannot change status (403), even on their own report', async () => {
+    const res = await ctx.call('PUT', api('/reports/rep_101/status'), { token: A, body: { status: 'IN_PROGRESS' } });
+    assertErrorEnvelope(res, 403, 'FORBIDDEN');
+  });
+
+  it('staff only see and update reports assigned to them', async () => {
+    const list = await ctx.call('GET', api('/reports'), { token: STAFF });
+    assert.ok(list.json.data.every((r) => r.assignedTo === 'staff-1'));
+    assert.ok(!list.json.data.some((r) => r.id === 'rep_104')); // assigned to staff-2
+    const res = await ctx.call('PUT', api('/reports/rep_104/status'), { token: STAFF, body: { status: 'IN_PROGRESS' } });
+    assertErrorEnvelope(res, 404, 'NOT_FOUND');
+  });
+
+  it('returns 404 for a non-existent report', async () => {
+    const res = await ctx.call('PUT', api('/reports/rep_999/status'), { token: ADMIN, body: { status: 'IN_PROGRESS' } });
+    assertErrorEnvelope(res, 404, 'NOT_FOUND');
+  });
+});
+
 describe('routing errors and safety', () => {
   it('returns 405 with an Allow header for an unsupported method', async () => {
     const res = await ctx.call('DELETE', api('/reports'), { token: ADMIN });
