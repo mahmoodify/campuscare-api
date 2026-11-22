@@ -6,7 +6,7 @@ This prototype implements the API contract with **mocked in-memory data**, **tok
 
 - **Main resource:** `reports` (with `inventory-items` and `metrics` as supporting resources)
 - **Full API documentation:** [docs/API.md](docs/API.md)
-- **Example requests:** [examples/requests.http](examples/requests.http), [Postman collection](postman/CampusCare.postman_collection.json), [examples/demo.sh](examples/demo.sh)
+- **Example requests:** [examples/requests.http](examples/requests.http), [Postman collection](postman/CampusCare.postman_collection.json), [examples/demo.sh](examples/demo.sh) (bash), [examples/demo.ps1](examples/demo.ps1) and [examples/api.ps1](examples/api.ps1) (Windows PowerShell). See [examples/README.md](examples/README.md).
 
 ## Requirements
 
@@ -22,6 +22,8 @@ git clone <your-repository-url>
 cd campuscare-api
 npm start
 ```
+
+The commands are the same in Windows PowerShell. If PowerShell says that running `npm.ps1` is disabled, use `npm.cmd start` instead (and `npm.cmd test` for the other npm commands).
 
 The server starts on **http://localhost:3000**. Open the HTML greeting page in a browser:
 
@@ -41,6 +43,13 @@ npm run postman     # regenerate the Postman collection
 bash examples/demo.sh   # scripted walkthrough of every feature (server must be running)
 ```
 
+Windows PowerShell equivalents (run in a second window while the server is running):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File examples\demo.ps1          # scripted walkthrough
+powershell -ExecutionPolicy Bypass -File examples\demo.ps1 -Pause   # wait for Enter after each request
+```
+
 > **Mock data resets on restart.** All data lives in memory. Every time the server restarts it returns to the initial data in [src/data/seed.js](src/data/seed.js). Restart the server before repeating the demo.
 
 ## Mock users and tokens
@@ -58,6 +67,8 @@ The staff role is not required by the assignment. It comes from the project prop
 
 ## Try it
 
+**macOS, Linux, Git Bash** (curl):
+
 ```bash
 # Without a token -> 401
 curl -i http://localhost:3000/api/v1/reports
@@ -73,6 +84,27 @@ curl -X POST http://localhost:3000/api/v1/reports \
   -H "Authorization: Bearer user-a-token" -H "Content-Type: application/json" \
   -d '{"inventoryItemId":"inv_002","issueType":"BROKEN","comment":"Exit sign is dark"}'
 ```
+
+**Windows PowerShell.** In PowerShell `curl` is an alias for `Invoke-WebRequest` and the commands above do not work, so load the small helper in [examples/api.ps1](examples/api.ps1) first. The usage is `api METHOD PATH [TOKEN] [JSON_BODY]`; it prints the HTTP status and the JSON response, including for error responses:
+
+```powershell
+# If scripts are blocked, run once per window: Set-ExecutionPolicy -Scope Process Bypass
+. .\examples\api.ps1       # load the helper (dot, space, path)
+
+# Without a token -> 401
+api GET /reports
+
+# Student A lists their own reports
+api GET /reports user-a-token
+
+# Student A tries to read Student B's report -> 404
+api GET /reports/rep_103 user-a-token
+
+# Create a report
+api POST /reports user-a-token '{"inventoryItemId":"inv_002","issueType":"BROKEN","comment":"Exit sign is dark"}'
+```
+
+For the plain-curl and PowerShell form of every endpoint, see [section 4 of the API docs](docs/API.md#4-trying-the-api-from-a-terminal).
 
 ## Endpoints
 
@@ -117,7 +149,7 @@ src/
   routes/              one file per group of endpoints (the greeting page lives here too)
 test/api.test.js       integration tests (node:test, 73 tests)
 docs/API.md            API documentation
-examples/              requests.http and demo.sh
+examples/              requests.http, demo.sh (bash), demo.ps1 and api.ps1 (PowerShell)
 postman/               generated Postman collection
 scripts/               Postman collection generator
 ```

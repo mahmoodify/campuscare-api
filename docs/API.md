@@ -644,3 +644,49 @@ Authorization: Bearer admin-token
 - **`404` for unknown routes:** returns the normal JSON error envelope.
 - **CORS:** enabled for all origins, so the Expo web app can call the API during development. `OPTIONS` requests answer `204`.
 
+---
+
+## 4. Trying the API from a terminal
+
+Start the server with `npm start` and use a second terminal window. Every request below works with the mock tokens `user-a-token`, `user-b-token`, `staff-token` and `admin-token` (see section 1.1).
+
+### 4.1 macOS, Linux, Git Bash (curl)
+
+```bash
+BASE=http://localhost:3000/api/v1
+
+curl -i $BASE/reports                                                    # 401, no token
+curl -H "Authorization: Bearer user-a-token" $BASE/reports               # list own reports
+curl -H "Authorization: Bearer user-a-token" $BASE/reports/rep_101       # get one
+curl -X POST $BASE/reports -H "Authorization: Bearer user-a-token" -H "Content-Type: application/json" \
+  -d '{"inventoryItemId":"inv_002","issueType":"BROKEN","comment":"Exit sign is dark"}'
+curl -X PUT $BASE/reports/rep_101 -H "Authorization: Bearer user-a-token" -H "Content-Type: application/json" \
+  -d '{"inventoryItemId":"inv_001","issueType":"MISSING","comment":"The bulb was removed"}'
+curl -X PUT $BASE/reports/rep_101/status -H "Authorization: Bearer staff-token" -H "Content-Type: application/json" \
+  -d '{"status":"IN_PROGRESS"}'
+curl -X DELETE -H "Authorization: Bearer user-b-token" $BASE/reports/rep_105
+curl -H "Authorization: Bearer admin-token" $BASE/metrics/maintenance
+```
+
+### 4.2 Windows PowerShell
+
+In Windows PowerShell, `curl` is an alias for `Invoke-WebRequest`, so the commands in 4.1 do not work there. Use the helper `examples/api.ps1`, which sends the request, adds the `Authorization` header and shows the status code and JSON body (also for 4xx and 5xx responses, which plain `Invoke-RestMethod` reports as exceptions):
+
+```powershell
+. .\examples\api.ps1      # once per window; if scripts are blocked: Set-ExecutionPolicy -Scope Process Bypass
+
+api GET /reports                                         # 401, no token
+api GET /reports user-a-token                            # list own reports
+api GET /reports/rep_101 user-a-token                    # get one
+api POST /reports user-a-token '{"inventoryItemId":"inv_002","issueType":"BROKEN","comment":"Exit sign is dark"}'
+api PUT /reports/rep_101 user-a-token '{"inventoryItemId":"inv_001","issueType":"MISSING","comment":"The bulb was removed"}'
+api PUT /reports/rep_101/status staff-token '{"status":"IN_PROGRESS"}'
+api DELETE /reports/rep_105 user-b-token
+api GET /metrics/maintenance admin-token
+```
+
+The pattern is `api METHOD PATH [TOKEN] [JSON_BODY]`; the path is relative to `/api/v1`. Put the JSON in single quotes. To use another server address, set `$global:ApiBase = "http://localhost:4000"` before loading the helper.
+
+The HTML greeting page is opened in a browser (`http://localhost:3000/api/v1/greeting`), not in the terminal. Without a browser: `Invoke-WebRequest http://localhost:3000/api/v1/greeting -UseBasicParsing | Select-Object -ExpandProperty Content`.
+
+The complete walkthrough of all features is in `examples/demo.sh` (bash) and `examples/demo.ps1` (PowerShell); see [examples/README.md](../examples/README.md).
