@@ -106,6 +106,44 @@ api POST /reports user-a-token '{"inventoryItemId":"inv_002","issueType":"BROKEN
 
 For the plain-curl and PowerShell form of every endpoint, see [section 4 of the API docs](docs/API.md#4-trying-the-api-from-a-terminal).
 
+**Running the API manually in Windows PowerShell.** In PowerShell, `curl` is an alias for `Invoke-WebRequest`, so the curl commands above will not work. Instead, start the server with `npm start` in one window, then open a second PowerShell window and paste the function below once. It sends a request, adds the `Authorization` header when you give a token, and prints the HTTP status (green for success, red for errors) followed by the JSON response. Error responses such as 401, 403 and 404 are shown normally instead of being thrown as exceptions.
+
+```powershell
+function api {
+  param([string]$Method, [string]$Path, [string]$Token, [string]$Body)
+  $headers = @{}
+  if ($Token) { $headers["Authorization"] = "Bearer $Token" }
+  $params = @{ Uri = "http://localhost:3000/api/v1$Path"; Method = $Method; Headers = $headers; UseBasicParsing = $true }
+  if ($Body) { $params["Body"] = $Body; $params["ContentType"] = "application/json" }
+  try {
+    $r = Invoke-WebRequest @params
+    $code = [int]$r.StatusCode; $text = $r.Content; $loc = [string]$r.Headers["Location"]
+  } catch {
+    if (-not $_.Exception.Response) { Write-Host "Cannot reach the server. Is 'npm start' running?" -ForegroundColor Red; return }
+    $code = [int]$_.Exception.Response.StatusCode; $text = $_.ErrorDetails.Message; $loc = ""
+    if (-not $text) { $text = $_.Exception.Message }
+  }
+  $color = if ($code -lt 300) { "Green" } else { "Red" }
+  Write-Host "`nHTTP $code" -ForegroundColor $color
+  if ($loc) { Write-Host "Location: $loc" }
+  Write-Host $text
+}
+```
+
+The usage is `api METHOD PATH [TOKEN] [JSON_BODY]`. The path is relative to `/api/v1`, and the JSON body goes in single quotes:
+
+```powershell
+api GET /reports                                   # no token -> 401
+api GET /reports user-a-token                      # Student A's own reports -> 200
+api GET /reports/rep_103 user-a-token              # Student B's report -> 404
+api POST /reports user-a-token '{"inventoryItemId":"inv_002","issueType":"BROKEN","comment":"Exit sign is dark"}'
+api PUT /reports/rep_101/status staff-token '{"status":"IN_PROGRESS"}'
+api DELETE /reports/rep_105 user-b-token
+api GET /metrics/maintenance admin-token
+```
+
+The same function is saved in [examples/api.ps1](examples/api.ps1), which you can load with `. .\examples\api.ps1`.
+
 ## Endpoints
 
 | Method | Path | Who | Description |
@@ -161,8 +199,8 @@ See [CONTRIBUTORS.md](CONTRIBUTORS.md) for members, student IDs and responsibili
 ### `git shortlog -sn --all`
 
 ```text
+    21  Kamal-Mustafayev                                                                                                 
     20  mahmoodify
-    18  Kamal-Mustafayev
      5  Mahmud Aliyev
      4  Kamal Mustafayev
 ```
