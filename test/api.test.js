@@ -355,6 +355,57 @@ describe('updating reports (PUT)', () => {
   });
 });
 
+describe('deleting reports (DELETE)', () => {
+  it('owner can delete their own pending report', async () => {
+    const res = await ctx.call('DELETE', api('/reports/rep_101'), { token: A });
+    assert.equal(res.status, 200);
+    assert.equal(res.json.success, true);
+    assert.equal(res.json.data, null);
+    const after = await ctx.call('GET', api('/reports/rep_101'), { token: A });
+    assert.equal(after.status, 404);
+  });
+
+  it('deleting twice: first 200, then 404 (state is the same)', async () => {
+    const first = await ctx.call('DELETE', api('/reports/rep_101'), { token: A });
+    const second = await ctx.call('DELETE', api('/reports/rep_101'), { token: A });
+    assert.equal(first.status, 200);
+    assertErrorEnvelope(second, 404, 'NOT_FOUND');
+  });
+
+  it("user A cannot delete user B's report", async () => {
+    const res = await ctx.call('DELETE', api('/reports/rep_103'), { token: A });
+    assertErrorEnvelope(res, 404, 'NOT_FOUND');
+    assert.ok(ctx.store.reports.some((r) => r.id === 'rep_103'));
+  });
+
+  it("user B cannot delete user A's report", async () => {
+    const res = await ctx.call('DELETE', api('/reports/rep_101'), { token: B });
+    assertErrorEnvelope(res, 404, 'NOT_FOUND');
+    assert.ok(ctx.store.reports.some((r) => r.id === 'rep_101'));
+  });
+
+  it('admin can delete any report', async () => {
+    const res = await ctx.call('DELETE', api('/reports/rep_103'), { token: ADMIN });
+    assert.equal(res.status, 200);
+    assert.ok(!ctx.store.reports.some((r) => r.id === 'rep_103'));
+  });
+
+  it('student cannot delete a report that is already in progress (409)', async () => {
+    const res = await ctx.call('DELETE', api('/reports/rep_102'), { token: A });
+    assertErrorEnvelope(res, 409, 'CONFLICT');
+  });
+
+  it('staff cannot delete reports (403)', async () => {
+    const res = await ctx.call('DELETE', api('/reports/rep_101'), { token: STAFF });
+    assertErrorEnvelope(res, 403, 'FORBIDDEN');
+  });
+
+  it('returns 404 when deleting a non-existent report', async () => {
+    const res = await ctx.call('DELETE', api('/reports/rep_999'), { token: ADMIN });
+    assertErrorEnvelope(res, 404, 'NOT_FOUND');
+  });
+});
+
 describe('routing errors and safety', () => {
   it('returns 405 with an Allow header for an unsupported method', async () => {
     const res = await ctx.call('DELETE', api('/reports'), { token: ADMIN });
