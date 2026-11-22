@@ -69,6 +69,26 @@ function remove({ user, params, store }) {
   return ok(200, 'Report deleted successfully.', null);
 }
 
+function updateStatus({ user, params, body, store }) {
+  const report = svc.findVisible(store, user, params.id); // staff: only assigned reports
+  const { value, errors } = V.validateStatusBody(body);
+  if (errors.length) throw E.validation(errors);
+
+  if (value.status === report.status) {
+    //PUT is idempotent: repeating the same request changes nothing
+    return ok(200, `Report already has status "${report.status}". Nothing was changed.`, svc.present(store, report));
+  }
+  if (!TRANSITIONS[report.status].includes(value.status)) {
+    const next = TRANSITIONS[report.status];
+    throw E.conflict(
+      `Cannot change status from "${report.status}" to "${value.status}". ` +
+        (next.length ? `The only allowed next status is "${next.join('", "')}".` : 'A resolved report cannot be reopened.')
+    );
+  }
+  svc.setStatus(report, value.status);
+  return ok(200, `Report status changed to "${report.status}".`, svc.present(store, report));
+}
+
 module.exports = function reportRoutes(P) {
   return [
     {
@@ -105,6 +125,13 @@ module.exports = function reportRoutes(P) {
       access: ['student', 'admin'],
       summary: 'Delete a report (students: own pending reports only).',
       handler: remove,
+    },
+    {
+      method: 'PUT',
+      path: `${P}/reports/:id/status`,
+      access: ['staff', 'admin'],
+      summary: 'Change report status: PENDING → IN_PROGRESS → RESOLVED (records inspection/resolution time).',
+      handler: updateStatus,
     },
   ];
 };
